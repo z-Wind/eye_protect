@@ -2,7 +2,7 @@ use iced::{executor, Application, Clipboard, Command, Element, Settings, Subscri
 
 pub fn main() -> iced::Result {
     let mut settings = Settings::default();
-    settings.window.always_on_top = true;
+    settings.window.always_on_top = false;
     EyeProtect::run(settings)
 }
 
