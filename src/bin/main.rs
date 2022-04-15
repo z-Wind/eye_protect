@@ -68,6 +68,6 @@ impl Application for EyeProtect {
     }
 
     fn should_exit(&self) -> bool {
-        self.value == 0
+        self.value <= 0
     }
 }
