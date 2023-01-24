@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iced = { version = "0.3", features = ["glow", "tokio"] }
+iced = { version = "0.7", features = ["glow", "tokio", "canvas"] }
 chrono = "0.4"
