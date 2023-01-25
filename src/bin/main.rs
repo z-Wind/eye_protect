@@ -1,3 +1,4 @@
+use clap::Parser;
 use iced::widget::canvas::{Cache, Cursor, Geometry};
 use iced::widget::{canvas, container};
 use iced::{alignment, application, executor, theme, window};
@@ -5,10 +6,25 @@ use iced::{
     Application, Color, Command, Element, Length, Rectangle, Settings, Subscription, Theme, Vector,
 };
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    top_enable: bool,
+    #[arg(short, long, default_value_t = 20)]
+    wait_seconds: i32,
+    /// Print to screen, only support ascii code
+    #[arg(short, long)]
+    remind: Option<String>,
+}
+
 pub fn main() -> iced::Result {
+    let args = Args::parse();
+
     EyeProtect::run(Settings {
+        flags: (args.wait_seconds, args.remind),
         window: window::Settings {
-            always_on_top: false,
+            always_on_top: args.top_enable,
             position: window::Position::Centered,
             ..window::Settings::default()
         },
@@ -19,6 +35,7 @@ pub fn main() -> iced::Result {
 struct EyeProtect {
     value: i32,
     text: Cache,
+    remind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,15 +46,15 @@ pub enum Message {
 impl Application for EyeProtect {
     type Executor = executor::Default;
     type Message = Message;
-    type Flags = ();
+    type Flags = (i32, Option<String>);
     type Theme = Theme;
 
-    fn new(_flags: ()) -> (EyeProtect, Command<Self::Message>) {
-        let value = 20;
+    fn new(flags: (i32, Option<String>)) -> (EyeProtect, Command<Self::Message>) {
         (
             Self {
-                value,
+                value: flags.0,
                 text: Default::default(),
+                remind: flags.1,
             },
             iced::window::set_mode(iced::window::Mode::Fullscreen),
         )
@@ -107,13 +124,25 @@ impl<Message> canvas::Program<Message> for EyeProtect {
             frame.translate(Vector::new(center.x, center.y));
 
             frame.fill_text(canvas::Text {
-                content: format!("{:02} s", self.value),
+                content: format!("{:02} s", self.value,),
                 color: Color::WHITE,
                 size: 150.0,
                 horizontal_alignment: alignment::Horizontal::Center,
                 vertical_alignment: alignment::Vertical::Center,
                 ..canvas::Text::default()
             });
+
+            if let Some(remind) = self.remind.as_deref() {
+                frame.translate(Vector::new(0.0, -center.y / 3.0 * 2.0));
+                frame.fill_text(canvas::Text {
+                    content: remind.to_string(),
+                    color: Color::WHITE,
+                    size: 50.0,
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Top,
+                    ..canvas::Text::default()
+                });
+            }
         });
 
         vec![text]
