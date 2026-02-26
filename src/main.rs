@@ -100,7 +100,7 @@ pub fn main() {
         // 啟動並等待 GUI 結束
         match command.status() {
             Ok(status) => println!(
-                "  休息結束: {} (結束碼: {})",
+                "[{}] 休息結束 (結束碼: {})",
                 Local::now().format("%H:%M:%S"),
                 status
             ),
