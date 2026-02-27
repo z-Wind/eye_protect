@@ -3,12 +3,19 @@ name = "eye_protect"
 version = "0.3.0"
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "eye_protect"
+path = "src/main.rs"
+
+[[bin]]
+name = "eye_protect_gui"
+path = "src/bin/gui.rs"
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio", "canvas"] }
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
+ctrlc = "3.5"
 
 [profile.release]
 opt-level = 'z'   # 優化大小
