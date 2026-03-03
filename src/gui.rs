@@ -1,5 +1,4 @@
 use clap::Parser;
-use eye_protect::GuiArgs;
 use iced::{
     Color, Element, Length, Pixels, Rectangle, Renderer, Subscription, Task, Theme, alignment,
     keyboard,
@@ -11,9 +10,29 @@ use iced::{
     window,
 };
 
-pub fn main() -> iced::Result {
-    let args = GuiArgs::parse();
+/// GUI 共用參數（守護進程與 GUI binary 都使用相同欄位）
+#[derive(Parser, Debug, Clone)]
+pub struct GuiArgs {
+    /// 啟用視窗置頂
+    #[arg(short, long, help = "將護眼視窗固定在最上層，防止被其他視窗遮擋")]
+    pub top_enable: bool,
 
+    /// 倒數計時秒數
+    #[arg(
+        short,
+        long,
+        default_value_t = 20,
+        value_parser = clap::value_parser!(u32).range(1..=3600),
+        help = "設定護眼視窗出現的時間長度（單位：秒，範圍 1–3600）"
+    )]
+    pub wait_seconds: u32,
+
+    /// 提醒文字內容
+    #[arg(short, long, help = "在畫面中央顯示自定義的提醒訊息")]
+    pub remind: Option<String>,
+}
+
+pub fn run(args: GuiArgs) -> iced::Result {
     let config = Config {
         top_enable: args.top_enable,
         wait_seconds: args.wait_seconds,
@@ -100,7 +119,7 @@ impl EyeProtect {
             }
             // #11 ESC 以結束碼 1 退出，表示使用者主動跳過
             Message::KeyPressed(keyboard::Key::Named(keyboard::key::Named::Escape)) => {
-                return window::latest().and_then(window::close);
+                std::process::exit(1);
             }
             _ => {}
         }

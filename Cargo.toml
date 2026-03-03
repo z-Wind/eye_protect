@@ -3,14 +3,6 @@ name = "eye_protect"
 version = "0.3.0"
 edition = "2024"
 
-[[bin]]
-name = "eye_protect"
-path = "src/main.rs"
-
-[[bin]]
-name = "eye_protect_gui"
-path = "src/bin/gui.rs"
-
 [dependencies]
 iced = { version = "0.14", features = ["tokio", "canvas"] }
 chrono = "0.4"
@@ -22,3 +14,4 @@ opt-level = 'z'   # 優化大小
 lto = true        # 連結時優化
 codegen-units = 1 # 提高優化品質
 panic = 'abort'   # 減少展開開銷
+strip = true

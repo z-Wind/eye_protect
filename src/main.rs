@@ -1,7 +1,9 @@
+mod gui;
+
 use chrono::Local;
 use clap::Parser;
-use eye_protect::GuiArgs;
-use std::{env, path::PathBuf, process::Command, thread, time::Duration};
+use gui::GuiArgs;
+use std::{env, ffi::OsString, path::PathBuf, process::Command, thread, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -21,36 +23,17 @@ struct Args {
     )]
     interval_minutes: u64,
 
+    /// 隱藏的 GUI 模式開關
+    #[arg(long, hide = true)]
+    gui_mode: bool,
+
     #[command(flatten)]
-    gui: GuiArgs,
-}
-
-/// 取得 GUI 執行檔路徑。
-/// 假設 `eye_protect_gui` 與本執行檔位於同一目錄。
-/// 若打包方式改變，請確保兩個執行檔維持在相同目錄下。
-fn get_gui_executable() -> PathBuf {
-    let exe = env::current_exe().expect("無法獲取當前執行檔路徑");
-    let dir = exe.parent().expect("無法獲取執行檔所在目錄");
-    let mut path = dir.join("eye_protect_gui");
-    path.set_extension(env::consts::EXE_EXTENSION);
-    path
-}
-
-fn build_gui_args(gui: &GuiArgs) -> Vec<String> {
-    let mut args = vec!["-w".to_string(), gui.wait_seconds.to_string()];
-    if gui.top_enable {
-        args.push("-t".to_string());
-    }
-    if let Some(remind) = &gui.remind {
-        args.push("-r".to_string());
-        args.push(remind.clone());
-    }
-    args
+    gui_args: GuiArgs,
 }
 
 /// 啟動 GUI 並等待結束。
 /// 回傳 `true` 表示成功啟動（不論使用者是否提前離開），`false` 表示啟動失敗。
-fn launch_gui(exe: &PathBuf, gui_args: &[String]) -> bool {
+fn launch_gui(exe: &PathBuf, gui_args: &[OsString]) -> bool {
     match Command::new(exe).args(gui_args).status() {
         Ok(status) => {
             println!(
@@ -69,26 +52,28 @@ fn launch_gui(exe: &PathBuf, gui_args: &[String]) -> bool {
 
 pub fn main() {
     let args = Args::parse();
-    let gui_exe = get_gui_executable();
+
+    if args.gui_mode {
+        if let Err(e) = gui::run(args.gui_args) {
+            eprintln!("[{}] 啟動 GUI 失敗: {e}", Local::now().format("%H:%M:%S"));
+        };
+    } else {
+        run_daemen(args)
+    }
+}
+
+fn run_daemen(args: Args) {
+    let self_exe = env::current_exe().expect("無法獲取當前執行檔路徑");
 
     println!("--- 護眼守護進程已啟動 ---");
-    println!("目標執行檔: {}", gui_exe.display());
+    println!("目標執行檔: {}", self_exe.display());
     println!("作業系統: {}", env::consts::OS);
     println!(
         "設定: 每 {} 分鐘休息 {} 秒",
-        args.interval_minutes, args.gui.wait_seconds
+        args.interval_minutes, args.gui_args.wait_seconds
     );
-    if args.gui.top_enable {
+    if args.gui_args.top_enable {
         println!("已開啟 Always-on-top");
-    }
-
-    if !gui_exe.exists() {
-        eprintln!(
-            "錯誤: 找不到 {:?}。\n\
-             請確保 eye_protect_gui 與本執行檔位於同一目錄下。",
-            gui_exe
-        );
-        std::process::exit(1);
     }
 
     // #4 攔截 Ctrl+C，印出提示後優雅退出
@@ -101,7 +86,14 @@ pub fn main() {
     })
     .expect("無法設定 Ctrl+C 處理器");
 
-    let gui_args = build_gui_args(&args.gui);
+    // 獲取目前進程啟動時的所有原始參數
+    // 過濾掉重複的 gui-mode 防止參數污染
+    let mut gui_args: Vec<OsString> = env::args_os()
+        .skip(1)
+        .filter(|arg| arg != "--gui-mode")
+        .collect();
+    gui_args.push(OsString::from("--gui-mode"));
+
     let interval = Duration::from_secs(60 * args.interval_minutes);
 
     // #6 連續失敗計數，超過門檻自動退出
@@ -120,7 +112,7 @@ pub fn main() {
             Local::now().format("%H:%M:%S")
         );
 
-        if launch_gui(&gui_exe, &gui_args) {
+        if launch_gui(&self_exe, &gui_args) {
             consecutive_failures = 0;
         } else {
             consecutive_failures += 1;
@@ -128,7 +120,7 @@ pub fn main() {
                 eprintln!(
                     "錯誤: GUI 連續啟動失敗 {} 次，守護進程退出。\n\
                      請確認 {:?} 是否存在且有執行權限。",
-                    MAX_CONSECUTIVE_FAILURES, gui_exe
+                    MAX_CONSECUTIVE_FAILURES, self_exe
                 );
                 std::process::exit(1);
             }
