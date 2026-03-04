@@ -1,3 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
+
 use clap::Parser;
 use iced::{
     Color, Element, Length, Pixels, Rectangle, Renderer, Subscription, Task, Theme, alignment,
@@ -9,6 +14,17 @@ use iced::{
     },
     window,
 };
+
+// 定義狀態常數
+const STATUS_RUNNING: u8 = 0;
+const STATUS_COMPLETED: u8 = 1;
+const STATUS_SKIPPED: u8 = 2;
+
+pub enum ExitStatus {
+    Completed,
+    Skipped,
+    Aborted,
+}
 
 /// GUI 共用參數（守護進程與 GUI binary 都使用相同欄位）
 #[derive(Parser, Debug, Clone)]
@@ -32,7 +48,7 @@ pub struct GuiArgs {
     pub remind: Option<String>,
 }
 
-pub fn run(args: GuiArgs) -> iced::Result {
+pub fn run(args: GuiArgs) -> Result<ExitStatus, iced::Error> {
     let config = Config {
         top_enable: args.top_enable,
         wait_seconds: args.wait_seconds,
@@ -45,11 +61,17 @@ pub fn run(args: GuiArgs) -> iced::Result {
         window::Level::Normal
     };
 
+    // 預設為 0 (運行中/異常關閉)
+    let exit_status_raw = Arc::new(std::sync::atomic::AtomicU8::new(STATUS_RUNNING));
+    let status_for_closure = exit_status_raw.clone();
     iced::application(
         move || {
             let task =
                 window::latest().and_then(|id| window::set_mode(id, window::Mode::Fullscreen));
-            (EyeProtect::new(config.clone()), task)
+            (
+                EyeProtect::new(config.clone(), status_for_closure.clone()),
+                task,
+            )
         },
         EyeProtect::update,
         EyeProtect::view,
@@ -61,7 +83,14 @@ pub fn run(args: GuiArgs) -> iced::Result {
     .title("Eye Protect")
     .subscription(EyeProtect::subscription)
     .theme(|_: &EyeProtect| Theme::Dark)
-    .run()
+    .run()?;
+
+    // 視窗關閉後檢查狀態
+    match exit_status_raw.load(Ordering::Acquire) {
+        STATUS_COMPLETED => Ok(ExitStatus::Completed),
+        STATUS_SKIPPED => Ok(ExitStatus::Skipped),
+        _ => Ok(ExitStatus::Aborted), // 預設狀態 (STATUS_RUNNING) 直接判定為 Aborted
+    }
 }
 
 // ── Config（靜態初始化參數）────────────────────────────────────────────────────
@@ -82,15 +111,18 @@ struct EyeProtect {
     timer_cache: Cache,
     /// 提醒文字的 cache（靜態，只繪製一次）
     remind_cache: Cache,
+
+    exit_status: Arc<AtomicU8>,
 }
 
 impl EyeProtect {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, exit_status: Arc<AtomicU8>) -> Self {
         Self {
             remaining: config.wait_seconds,
             timer_cache: Cache::default(),
             remind_cache: Cache::default(),
             config,
+            exit_status,
         }
     }
 }
@@ -112,6 +144,8 @@ impl EyeProtect {
                 // #1 用 checked_sub 搭配 u32，避免下溢；== 0 時關閉
                 match self.remaining.checked_sub(1) {
                     Some(0) | None => {
+                        // 時間到，正常關閉視窗 (ExitStatus::Completed)
+                        self.exit_status.store(STATUS_COMPLETED, Ordering::Release);
                         return window::latest().and_then(window::close);
                     }
                     Some(r) => self.remaining = r,
@@ -119,7 +153,9 @@ impl EyeProtect {
             }
             // #11 ESC 以結束碼 1 退出，表示使用者主動跳過
             Message::KeyPressed(keyboard::Key::Named(keyboard::key::Named::Escape)) => {
-                std::process::exit(1);
+                // 使用者按 ESC，標記跳過並關閉視窗 (ExitStatus::Skipped)
+                self.exit_status.store(STATUS_SKIPPED, Ordering::Release);
+                return window::latest().and_then(window::close);
             }
             _ => {}
         }

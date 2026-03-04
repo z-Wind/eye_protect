@@ -31,21 +31,26 @@ struct Args {
     gui_args: GuiArgs,
 }
 
-/// 啟動 GUI 並等待結束。
-/// 回傳 `true` 表示成功啟動（不論使用者是否提前離開），`false` 表示啟動失敗。
-fn launch_gui(exe: &PathBuf, gui_args: &[OsString]) -> bool {
+/// 啟動 GUI 並獲取結束碼
+/// - Some(0): 正常完成
+/// - Some(1): 使用者跳過
+/// - None: 啟動失敗或異常崩潰
+fn launch_gui(exe: &PathBuf, gui_args: &[OsString]) -> Option<i32> {
     match Command::new(exe).args(gui_args).status() {
-        Ok(status) => {
-            println!(
-                "[{}] 休息結束 (結束碼: {})",
-                Local::now().format("%H:%M:%S"),
-                status
-            );
-            true
-        }
+        Ok(status) => status.code(),
         Err(e) => {
-            eprintln!("[{}] 啟動 GUI 失敗: {e}", Local::now().format("%H:%M:%S"));
-            false
+            let cwd = env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "無法獲取".to_string());
+
+            eprintln!(
+                "[{}] 啟動 GUI 失敗!\n 錯誤: {e}\n 執行檔路徑: {}\n 當前工作目錄: {}",
+                Local::now().format("%H:%M:%S"),
+                exe.display(),
+                cwd
+            );
+
+            None
         }
     }
 }
@@ -54,9 +59,14 @@ pub fn main() {
     let args = Args::parse();
 
     if args.gui_mode {
-        if let Err(e) = gui::run(args.gui_args) {
-            eprintln!("[{}] 啟動 GUI 失敗: {e}", Local::now().format("%H:%M:%S"));
-        };
+        match gui::run(args.gui_args) {
+            Ok(gui::ExitStatus::Completed) => std::process::exit(0),
+            Ok(gui::ExitStatus::Skipped) | Ok(gui::ExitStatus::Aborted) => std::process::exit(1),
+            Err(e) => {
+                eprintln!("[{}] GUI 啟動崩潰: {e}", Local::now().format("%H:%M:%S"));
+                std::process::exit(101); // 讓 Daemon 觸發異常計數
+            }
+        }
     } else {
         run_daemen(args)
     }
@@ -100,34 +110,87 @@ fn run_daemen(args: Args) {
     const MAX_CONSECUTIVE_FAILURES: u32 = 3;
     let mut consecutive_failures: u32 = 0;
 
+    let mut total_completed: u32 = 0;
+    let mut total_skipped: u32 = 0;
+
     loop {
+        println!("\n------------------------------------------------------------");
         println!(
             "[{}] 下次休息將在 {} 分鐘後...",
             Local::now().format("%H:%M:%S"),
             args.interval_minutes
         );
+
+        let start_wait = std::time::Instant::now();
         thread::sleep(interval);
+
+        // 如果實際睡眠時間遠超預期（例如超過預期的 1.5 倍），代表中間可能休眠了
+        if start_wait.elapsed() > interval + Duration::from_secs(60) {
+            println!(
+                "[{}] 偵測到系統休眠或長時間停頓，跳過本次提醒並重新計時。",
+                Local::now().format("%H:%M:%S")
+            );
+            continue;
+        }
+
         println!(
             "[{}] 休息時間到！啟動護眼視窗...",
             Local::now().format("%H:%M:%S")
         );
 
-        if launch_gui(&self_exe, &gui_args) {
-            consecutive_failures = 0;
-        } else {
-            consecutive_failures += 1;
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                eprintln!(
-                    "錯誤: GUI 連續啟動失敗 {} 次，守護進程退出。\n\
-                     請確認 {:?} 是否存在且有執行權限。",
-                    MAX_CONSECUTIVE_FAILURES, self_exe
+        match launch_gui(&self_exe, &gui_args) {
+            // 情況 A：明確的預期行為
+            Some(0) => {
+                consecutive_failures = 0;
+                total_completed += 1;
+
+                println!(
+                    "[{}] 休息結束 [ 累計完成: {:>3} | 跳過: {:>3} ]",
+                    Local::now().format("%H:%M:%S"),
+                    total_completed,
+                    total_skipped
                 );
-                std::process::exit(1);
             }
-            eprintln!(
-                "警告: GUI 啟動失敗（{}/{}），將在下個週期重試。",
-                consecutive_failures, MAX_CONSECUTIVE_FAILURES
-            );
+            Some(1) => {
+                consecutive_failures = 0;
+                total_skipped += 1;
+
+                println!(
+                    "[{}] 休息跳過 [ 累計完成: {:>3} | 跳過: {:>3} ]",
+                    Local::now().format("%H:%M:%S"),
+                    total_completed,
+                    total_skipped
+                );
+            }
+
+            // 情況 B：非預期的 Exit Code (例如 101 Panic, 或是被 Task Manager 殺掉)
+            // 情況 C：啟動失敗 (None)
+            other => {
+                consecutive_failures += 1;
+
+                let error_msg = match other {
+                    Some(code) => format!("非預期退出碼 ({})", code),
+                    None => "無法啟動執行檔或進程被強制終止".to_string(),
+                };
+
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    eprintln!(
+                        "[{}] 錯誤: GUI 連續啟動失敗 {} 次 ({})，守護進程退出。",
+                        Local::now().format("%H:%M:%S"),
+                        MAX_CONSECUTIVE_FAILURES,
+                        error_msg
+                    );
+                    std::process::exit(1);
+                }
+
+                eprintln!(
+                    "[{}] 警告: GUI 啟動失敗（{}/{}），將在下個週期重試。原因: {}",
+                    Local::now().format("%H:%M:%S"),
+                    consecutive_failures,
+                    MAX_CONSECUTIVE_FAILURES,
+                    error_msg
+                );
+            }
         }
     }
 }
